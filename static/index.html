@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AllerGenie Recipe Generator</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <img src="/static/logo.png" alt="Allergenie Logo" style="display: block; margin: 0 auto; width: 100px; height: auto; margin-bottom: 20px;">
+        <h1>AllerGenie Recipe Generator</h1>
+        <form id="recipe-form">
+            <label for="question">Ask for a recipe:</label>
+            <input type="text" id="question" name="question" placeholder="Include potential allergies you may have!" required>
+            <button type="submit">Generate Recipe</button>
+        </form>
+        <div id="spinner" class="spinner" style="display: none;"></div> 
+        <div id="recipe-result" class="result"></div>
+    </div>
+    <script>
+        document.getElementById("recipe-form").addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const question = document.getElementById("question").value;
+
+            document.getElementById("spinner").style.display = 'block';
+            document.getElementById("recipe-result").innerHTML = ''; 
+
+            const response = await fetch("/generate-recipe/", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ question })
+            });
+
+            // Hide the spinner after receiving the response
+            document.getElementById("spinner").style.display = 'none';
+
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById("recipe-result").innerHTML = `<h2>Generated Recipe</h2><pre>${data.recipe}</pre>`;
+            } else {
+                const errorData = await response.json();
+                document.getElementById("recipe-result").innerHTML = `<p class="error">${errorData.detail}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>
