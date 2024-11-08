@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 # Set up AWS and file paths
 # You can also create a user role with the following policies attached on your account: AmazonS3FullAccess, AmazonS3ReadOnlyAccess, AmazonSageMakerFullAccess, AWSLambda_FullAccess
 region = "us-east-1"
-llm_endpoint_name = "meta-textgeneration-llama-3-8b-instruct-2024-11-04-14-20-36-390"
-embedding_endpoint_name = "hf-sentencesimilarity-bge-large-en-v1-5-2024-11-04-14-30-07-790"
+llm_endpoint_name = "meta-textgeneration-llama-3-8b-instruct-2024-11-08-00-44-03-819"
+embedding_endpoint_name = "hf-sentencesimilarity-bge-large-en-v1-5-2024-11-08-00-54-25-674"
 
 # Initialize the SageMaker runtime client
-sagemaker_runtime_client = boto3.client('sagemaker-runtime', 
+sagemaker_runtime_client = boto3.client('sagemaker-runtime',
 region_name= region)
 
 # LLM: Define the Llama38BContentHandler class
@@ -152,45 +152,82 @@ def create_faiss_index() -> VectorStoreIndexWrapper:
 wrapper_store_faiss = create_faiss_index()
 
 # Define the prompt template
-prompt_template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are a helpful assistant that generates recipes in a well-structured format.
-Please generate a recipe.
-Ensure that ingredients are listed only once and avoid repeating any entries.
-The recipe should include the following sections:
-1. Title of the recipe
-2. Ingredients List with measurements (avoid repeats)
-3. Instructions in numbered steps for preparation
+prompt_template = prompt_template = """You are a professional chef and certified nutritionist specializing in food allergies and dietary restrictions.
+Generate {num_recipes} COMPLETELY DIFFERENT recipes based on the user's request.
 
-Return the result in the following format:
+SAFETY & REQUIREMENTS CHECK:
+1. Allergens & Diet:
+   - List all identified allergens and sensitivities
+   - Religious/cultural dietary restrictions
+   - Additional dietary preferences (e.g., low-sodium)
+   - Cross-contamination concerns
 
-Title:
-Recipe title here
+2. Recipe Differentiation:
+   Each recipe must have unique:
+   - Cooking method (e.g., stir-fry, baked, grilled)
+   - Main protein/ingredient source
+   - Flavor profile and texture
+   - Base seasonings and sauces
 
-Ingredients:
-- Ingredient 1
-- Ingredient 2
-- Ingredient 3
+FOR EACH RECIPE PROVIDE:
 
-Instructions:
-1. Step 1
-2. Step 2
-3. Step 3
+1. Overview:
+   - Title (with cultural origin if applicable)
+   - Difficulty level (Easy/Medium/Hard)
+   - Time (Prep/Cook/Total)
+   - Servings
+   - Comprehensive allergen and dietary compliance statement
 
-Make sure the formatting follows the above structure.
+2. Ingredients:
+   - Full ingredient list with quantities
+   - Clear allergen markings
+   - 2-3 substitution options for main ingredients
+   - Cross-contamination prevention notes
 
-<|eot_id|><|start_header_id|>user<|end_header_id|>
-Use the following pieces of context to provide a concise answer to the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
-#### Context ####
-{context}
-#### End of Context ####
+3. Instructions:
+   - Clear, numbered steps
+   - Critical technique notes
+   - Safety measures for allergen handling
+   - Common mistakes to avoid
 
-Question: {question}
-<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+4. Storage & Serving:
+   - Plating suggestions
+   - Storage guidelines
+   - Safe reheating instructions
+
+SAFETY NOTICE:
+- Confirm allergen compliance
+- Note cross-contamination risks
+- Recommend healthcare provider consultation for severe allergies
+
+{query}
 """
 
 PROMPT = PromptTemplate(
-    template=prompt_template, input_variables=["context", "question"]
+    template=prompt_template,
+    input_variables=["query", "num_recipes"]
 )
+
+def get_multiple_recipes(llm, query, num_recipes):
+    recipes = []
+    try:
+        for i in range(num_recipes):
+            modified_query = f"""Give me recipe #{i+1} for: {query}
+            Important: This recipe must be COMPLETELY DIFFERENT in style, preparation method, and ingredients from any previous recipes."""
+
+            # Invoke the LLM with the modified query to generate one recipe at a time
+            response = invoke_endpoint(
+                llm_endpoint_name,
+                prompt_template.format(query=modified_query, num_recipes="1")
+            )
+
+            formatted_response = f"\n=== Recipe {i+1} ===\n{response}"
+            recipes.append(formatted_response)
+
+        return "\n\n".join(recipes)
+    except Exception as e:
+        logger.error(f"Error generating multiple recipes: {str(e)}")
+        return None
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -203,21 +240,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+#app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class RecipeRequest(BaseModel):
     allergy: str = Field(..., description="Enter Your Allergy (e.g., gluten, dairy, treenuts)")
     dish_type: str = Field(..., description="Enter Meal Type (e.g., dessert, main course) or Cuisine Type (e.g., Italian, Japanese, Asian)")
+    num_recipes: int = Field(..., description="Number of recipes to generate (e.g., 3 for three recipes)")
 
-@app.get("/")
-async def get_html():
-    return FileResponse("static/index.html")
+#@app.get("/")
+#async def get_html():
+    #return FileResponse("static/index.html")
 
 @app.post("/generate-recipe/")
 async def generate_recipe(request: RecipeRequest):
     allergy = request.allergy
     dish_type = request.dish_type
-    question = f"I have a {allergy} allergy, and I would like to make a {dish_type} dish. Generate an allergy-free recipe for me."
+    num_recipes = request.num_recipes
+    question = f"I have a {allergy} allergy, and I would like to make a {dish_type} dish. Generate {num_recipes} allergy-free recipes for me."
 
     try:
         # Use the wrapper store as a retriever
@@ -234,7 +273,7 @@ async def generate_recipe(request: RecipeRequest):
         context = "\n".join([doc.page_content for doc in context_documents if hasattr(doc, 'page_content')])
 
         # Generate response using Llama3
-        prompt = PROMPT.format(context=context, question=question)
+        prompt = PROMPT.format(context=context, query=question, num_recipes=num_recipes)
         response = invoke_endpoint(llm_endpoint_name, prompt)
 
         if response is None:
