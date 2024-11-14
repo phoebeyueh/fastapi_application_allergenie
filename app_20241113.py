@@ -123,7 +123,7 @@ class StableDiffusionContentHandler:
     def transform_input(self, prompt: str) -> bytes:
         # Specify image size and inference parameters based on your needs
         payload = {
-            "prompt": prompt, 
+            "prompt": prompt,
             "num_inference_steps": 50,  # Adjust the number of inference steps
             "guidance_scale": 7.5,  # control image adherence to prompt
             "num_images_per_prompt": 1,
@@ -146,7 +146,7 @@ def generate_image_from_title(title: str) -> List[str]:
             ContentType='application/json',
             Body=input_data
         )
-        
+
         # Process the image response
         image = response["Body"].read()
         return image
@@ -235,7 +235,7 @@ Recipe title here
 **Recipe 3:**
 **Title:**
 Recipe title here
-**Ingredients:**
+Ingredients:
 - Ingredient 1
 - Ingredient 2
 - Ingredient 3
@@ -297,10 +297,10 @@ async def generate_recipe(request: RecipeRequest):
             raise HTTPException(status_code=500, detail="Error generating recipe from LLM.")
 
         # Extract recipe titles using regex
-        recipe_titles = re.findall(r"\*\*Title:\*\*\s*(.*)", response)
-        if not recipe_titles:
+        #recipe_titles = re.findall(r"\*\*Title:\*\*\s*(.*)", response)
+        #if not recipe_titles:
             raise HTTPException(status_code=500, detail="Error extracting recipe titles.")
-        
+
         # Generate images for each title
         # images = {title: generate_image_from_title(title) for title in recipe_titles}
 
