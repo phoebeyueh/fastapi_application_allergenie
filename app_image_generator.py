@@ -7,7 +7,6 @@ import boto3
 import logging
 import pandas as pd
 import numpy as np
-from urllib.parse import quote
 from pydantic import BaseModel, Field
 from io import StringIO, BytesIO
 from typing import List, Dict
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 region = "us-east-1"
 llm_endpoint_name = "llama3-allergenie"
 embedding_endpoint_name = "embedding-allergenie"
-sd_endpoint_name = "allergenie-model-txt2img-stabilityai-st-2024-11-16-18-48-29-504"
+sd_endpoint_name = "image-generator-allergenie"
 
 # Initialize the SageMaker runtime client
 sagemaker_runtime_client = boto3.client('sagemaker-runtime',
@@ -138,14 +137,14 @@ def generate_image_from_title(title: str) -> str:
 
         s3 = boto3.client('s3', region_name='us-east-1')
         bucket_name = 'recipe-image-generator'
-        formatted_title = quote(title)
+        formatted_title = title.replace(" ", "-")
         s3_key = f"images/{formatted_title}.jpg"
 
         # Upload directly from the buffer
-        s3.upload_fileobj(buffer, bucket_name, s3_key, ExtraArgs={"ACL": "public-read"})
+        s3.upload_fileobj(buffer, bucket_name, s3_key, ExtraArgs={"ACL": "public-read","ContentType": "image/jpeg"})
         logger.info(f"Image uploaded directly to S3 bucket '{bucket_name}' with key '{s3_key}'")
 
-        s3_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_key}"
+        s3_url = f"https://{bucket_name}.s3.us-east-1.amazonaws.com/{s3_key}"
 
         # Return a clickable link
         return s3_url
@@ -201,44 +200,50 @@ You are a helpful assistant that generates recipes in a well-structured format.
 Generate THREE (3) COMPLETELY DIFFERENT recipes based on the user's request.
 
 Ensure that ingredients are listed only once in each recipe and avoid repeating any entries. The recipes should each include the following sections:
-1. **Title** of the recipe
-2. **Ingredients List** with measurements (avoid repeats)
-3. **Instructions** in numbered steps for preparation
+1. Title of the recipe
+2. Ingredients List with measurements (avoid repeats)
+3. Instructions in numbered steps for preparation
 
 Return the recipes in the following format, ensuring each of the three recipes is structured exactly as follows:
 
-**Recipe 1:**
-**Title:**
+Recipe 1:
+Title:
 Recipe title here
-**Ingredients:**
-- Ingredient 1
-- Ingredient 2
-- Ingredient 3
-**Instructions:**
-1. Step 1
-2. Step 2
-3. Step 3
 
-**Recipe 2:**
-**Title:**
-Recipe title here
-**Ingredients:**
-- Ingredient 1
-- Ingredient 2
-- Ingredient 3
-**Instructions:**
-1. Step 1
-2. Step 2
-3. Step 3
-
-**Recipe 3:**
-**Title:**
-Recipe title here
 Ingredients:
 - Ingredient 1
 - Ingredient 2
 - Ingredient 3
-**Instructions:**
+
+Instructions:
+1. Step 1
+2. Step 2
+3. Step 3
+
+Recipe 2:
+Title:
+Recipe title here
+
+Ingredients:
+- Ingredient 1
+- Ingredient 2
+- Ingredient 3
+
+Instructions:
+1. Step 1
+2. Step 2
+3. Step 3
+
+Recipe 3:
+Title:
+Recipe title here
+
+Ingredients:
+- Ingredient 1
+- Ingredient 2
+- Ingredient 3
+
+Instructions:
 1. Step 1
 2. Step 2
 3. Step 3
@@ -265,13 +270,15 @@ app.add_middleware(
 )
 
 class RecipeRequest(BaseModel):
-    allergy: str = Field(..., description="Enter Your Allergy (e.g., gluten, dairy, treenuts)")
-    dish_type: str = Field(..., description="Enter Meal Type (e.g., dessert, main course) or Cuisine Type (e.g., Italian, Japanese, Asian)")
+    allergy: str = Field(..., description="Allergy Selection")
+    dish_type: str = Field(..., description="Meal Type Selection")
+    generate_images: bool = Field(False, description="Image Generation Option")
 
 @app.post("/generate-recipe/")
 async def generate_recipe(request: RecipeRequest):
     allergy = request.allergy
     dish_type = request.dish_type
+    generate_images = request.generate_images
     question = f"I am allergic to {allergy}, can you give me three {dish_type} recipes free of {allergy}?"
 
     try:
@@ -296,16 +303,23 @@ async def generate_recipe(request: RecipeRequest):
             raise HTTPException(status_code=500, detail="Error generating recipe from LLM.")
 
         # Extract recipe titles using regex
-        recipe_titles = re.findall(r"\*\*Title:\*\*\s*(.*)", response)
+        recipe_titles = re.findall(r"Title:\s*(.*)", response)
         if not recipe_titles:
             raise HTTPException(status_code=500, detail="Error extracting recipe titles.")
 
-        images = {title: generate_image_from_title(title) for title in recipe_titles}
+        images = {}
+        # If images are requested, generate images for each title
+        if generate_images:
+            images = {title: generate_image_from_title(title) for title in recipe_titles}
+        else:
+            # If not requested, set the image response to a default message
+            images = {title: None for title in recipe_titles}
 
         return JSONResponse(content={
             "question": question,
             "recipe": response,
-            "images": images,})
+            "images": images
+        })
 
     except Exception as e:
         logger.error(f"Error generating recipe: {str(e)}")
@@ -313,4 +327,4 @@ async def generate_recipe(request: RecipeRequest):
 
 # Run the app locally
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True) 
