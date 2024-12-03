@@ -305,6 +305,9 @@ async def generate_recipe(request: RecipeRequest):
         # Extract recipe titles using regex
         recipe_titles = re.findall(r"Title:\s*(.*)", response)
         if not recipe_titles:
+            recipe_titles = re.findall(r"Recipe \d+: ([^\n]+)", response)
+        if not recipe_titles:
+            logger.error(f"Failed to extract recipe titles from the response: {response}")
             raise HTTPException(status_code=500, detail="Error extracting recipe titles.")
 
         images = {}
